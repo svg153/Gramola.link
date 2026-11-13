@@ -150,7 +150,7 @@ La clave del trabajador se genera ahí (en el servidor solo se guarda su huella,
 ## Requisitos en el servidor
 
 - El servicio necesita escribir en la carpeta de canciones (`ReadWritePaths` de `deploy/gramola.service`).
-- `python3` y `ffmpeg` para el Megamix y el volumen (usa `tools/megamix.py` y `tools/normalizar.py`, que `deploy.sh` sube junto al servidor).
+- `python3` y `ffmpeg` para convertir audio/vídeo y el volumen (usa `tools/megamix.py` y `tools/normalizar.py`, que `deploy.sh` sube junto al servidor). Sin ffmpeg, `megamix.py` recorta igual el tramo si el audio es WAV y `preparar-canciones.py` copia el audio tal cual.
 - El subdominio `admin.` apuntando al mismo servidor (alias del dominio en Plesk y registro en Cloudflare).
 
 ## Mensajes nuevos del protocolo

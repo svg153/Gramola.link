@@ -148,3 +148,10 @@ input, textarea { -webkit-user-select: text; user-select: text; -webkit-touch-ca
 .inst-room span { display: block; font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #605d5d; }
 .inst-room b { display: block; font-size: 44px; font-weight: 800; letter-spacing: .12em; line-height: 1.1; margin: 4px 0; }
 .inst-room p { margin: 0; font-size: 14px; line-height: 1.35; }
+
+/* Aviso del certificado: sin él el navegador no deja instalar la app ni encender el micro */
+.cert { border: 2px solid var(--red); background: #fff; padding: 12px 14px; margin: 10px 0 4px; }
+.cert p { margin: 0 0 6px; font-size: 14px; line-height: 1.35; }
+.cert p:last-child { margin: 0; }
+.cert a { color: var(--red); font-weight: 800; text-decoration: underline; }
+

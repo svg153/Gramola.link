@@ -3,7 +3,8 @@
 ## Requisitos
 
 - **Node.js 22+** (librerías `ws` y `@simplewebauthn/server` para el Touch ID del admin).
-- Para el admin: **python3** y **ffmpeg** (Megamix y volumen de las canciones).
+- Para el admin: **python3** y **ffmpeg** (convertir audio/vídeo y volumen de las canciones; sin ffmpeg el Megamix se
+  recorta igual si el audio es WAV, y las demos de `tools/demo-song.py` se generan en WAV).
 - Un **dominio con HTTPS** para jugar con móviles (los navegadores solo dejan usar el micro en páginas seguras).
 
 ## En local (para desarrollar)
@@ -47,10 +48,59 @@ Variables de entorno:
 | `SERVE_STATIC` | `1` | Con `0`, el servidor solo atiende `/api` y `/ws` (si los estáticos los sirve nginx). |
 | `DATA_DIR` | `server/data` | Récords (`records.json`), estadísticas, actividad, llaves del admin y canciones retiradas. |
 | `ADMIN_HOST` | — | Host del portal de administración. Sin ella, cualquier host que empiece por `admin.` (en local, `admin.localhost:8877`). |
+| `TLS_CERT` | — | Ruta al certificado. Con `TLS_KEY`, el servidor atiende por **https** en vez de http. |
+| `TLS_KEY` | — | Ruta a la clave privada del certificado. |
+| `HTTP_PORT` | — | Solo con https activo: abre además un puerto **http** en el mismo proceso (`0` lo desactiva). Sirve para que la tele entre sin aviso de certificado y siga compartiendo sala con los móviles. |
 
-En `localhost` el micro funciona porque los navegadores lo tratan como seguro. Como el micro solo funciona **instalado
-como app** (en el navegador solo enseña cómo instalarlo), para probarlo en el ordenador ábrelo en Chrome
-(`http://localhost:8877/m/`) e instálalo con el icono de instalar de la barra de direcciones.
+En `localhost` el micro funciona porque los navegadores lo tratan como seguro. Lo normal es instalarlo como app
+(icono de instalar de la barra de direcciones), pero tampoco hace falta: en una página segura la pantalla de instalar
+ofrece **«Seguir sin instalar»** y el micro funciona igual en una pestaña. Si la página **no** es segura, el botón no
+aparece: sin contexto seguro el navegador no concede el micrófono y la pantalla de instalar pasa a explicar cómo
+instalar el certificado.
+
+### Micro en móviles de la red local (sin dominio ni internet)
+
+El micrófono solo se concede en **contexto seguro**, así que con una IP (`http://192.168.1.50:8877`) los móviles entran
+pero no pueden cantar. Para una LAN sin dominio hace falta un certificado propio:
+
+```bash
+# 1. Una CA local y un certificado para la IP del portátil (sustituye la IP)
+openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes -keyout ca.key -out ca.crt \
+  -subj "/CN=Gramola Local CA" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign"
+openssl req -newkey rsa:2048 -nodes -keyout srv.key -out srv.csr -subj "/CN=192.168.1.50"
+printf "subjectAltName=IP:192.168.1.50,IP:127.0.0.1,DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n" > san.cnf
+openssl x509 -req -in srv.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out srv.crt -days 825 -sha256 -extfile san.cnf
+
+# 2. Arrancar en https (el QR de la tele apunta solo a https)
+HOST=0.0.0.0 PORT=8878 TLS_CERT=$PWD/srv.crt TLS_KEY=$PWD/srv.key npm start
+```
+
+Hay que instalar `ca.crt` en cada móvil (Android: Ajustes → Seguridad → Cifrado y credenciales → Instalar certificado
+→ Certificado de CA; iPhone: instalar el perfil y activarlo en Ajustes → General → Información → Ajustes de confianza
+de certificados). Sin la CA el navegador avisa en cada visita, no deja instalar la app y no da contexto seguro, así que
+tampoco deja encender el micro.
+
+Para no pelearse con el móvil, el servidor publica la CA en **`/ca.crt`** y la propia app enlaza ahí. Como en la tele
+ya hay un puerto http, el enlace de descarga apunta a ese puerto (`GET /api/mic-config` devuelve `caUrl`), de modo que
+el móvil se baja el certificado **sin aviso**: `http://IP-DEL-PORTATIL:8877/ca.crt`.
+
+#### La tele, sin avisos de certificado
+
+La tele no necesita el certificado: se abre la tele por **http** y solo los móviles entran por https. Con `HTTP_PORT`
+el mismo proceso atiende los dos puertos, así que la sala y los jugadores se comparten:
+
+```bash
+HOST=0.0.0.0 PORT=8878 HTTP_PORT=8877 \
+  TLS_CERT=$PWD/srv.crt TLS_KEY=$PWD/srv.key npm start
+```
+
+Como en la tele `location.origin` es http, el QR saldría inseguro; por eso se le pasa la dirección del micro a mano:
+
+```
+http://IP-DEL-PORTATIL:8877/app/?micro=https%3A%2F%2FIP-DEL-PORTATIL%3A8878%2Fm%2Findex.html
+```
+
+El QR y el texto «o entra en…» usan ese valor, así que los móviles siguen cayendo en el https.
 
 ## En un servidor
 

@@ -32,7 +32,8 @@ addEventListener('contextmenu', e => { if (!e.target.closest('input, textarea'))
 addEventListener('dragstart', e => { if (e.target.closest('img, video, canvas')) e.preventDefault(); });
 addEventListener('selectstart', e => { if (!e.target.closest || !e.target.closest('input, textarea')) e.preventDefault(); });
 
-// El micro SOLO funciona con la app instalada (PWA): en el navegador, únicamente la pantalla de instalar
+// El micro necesita contexto seguro (https de confianza). Con la app instalada (PWA) siempre; en el navegador
+// solo si la página es segura: si no, únicamente la pantalla de instalar, que es donde se explica el certificado.
 function isApp() {
   return matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches || navigator.standalone === true;
 }
@@ -41,7 +42,7 @@ function isApp() {
 const BACK = {};
 let fromPop = false;
 function show(id) {
-  if (!isApp() && id !== 's-install') id = 's-install';
+  if (!isApp() && !window.isSecureContext && id !== 's-install') id = 's-install';
   if (BACK[id] && !fromPop && id !== screen && !(history.state && history.state.g === id)) history.pushState({ g: id }, '');
   screen = id;
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === id));
@@ -259,8 +260,13 @@ async function showBlocked(err) {
   $('browser-name').textContent = insecure ? 'una página segura' : ios ? 'Safari' : /Chrome|CriOS/.test(ua) ? 'Chrome' : 'el navegador';
   let steps;
   if (insecure) {
-    $('blocked-text').textContent = 'El navegador solo deja usar el micro en páginas seguras (https). Entra así:';
-    steps = ['Abre ' + location.host + ' en el móvil', 'O escanea otra vez el QR de la tele', 'Pon tu nombre y elige tu color'];
+    if (certProblem()) {
+      $('blocked-text').textContent = 'El navegador no se fía del certificado de esta wifi, así que no deja usar el micro. Instálalo así:';
+      steps = ['Toca «Descargar el certificado» aquí abajo', 'Ábrelo y elige «Instalar» (se llama Gramola)', 'Cierra el navegador del todo y vuelve a entrar', 'Pon tu nombre y activa el micro'];
+    } else {
+      $('blocked-text').textContent = 'El navegador solo deja usar el micro en páginas seguras (https). Entra así:';
+      steps = ['Abre ' + location.host + ' en el móvil', 'O escanea otra vez el QR de la tele', 'Pon tu nombre y elige tu color'];
+    }
   } else if (err && err.name === 'NotFoundError') {
     $('blocked-text').textContent = 'No encontramos ningún micrófono en este aparato.';
     steps = ['Prueba con otro móvil', 'O con unos auriculares con micro'];
@@ -275,6 +281,7 @@ async function showBlocked(err) {
   }
   $('blocked-steps').innerHTML = steps.map(s => `<li>${s}</li>`).join('');
   $('b-ask').hidden = insecure || denied || (err && err.name === 'NotFoundError');
+  paintCert('cert-help-b', 'cert-link-b');
   show('s-blocked');
 }
 $('b-ask').onclick = async () => {
@@ -362,6 +369,18 @@ const fromQR = !!params.get('s');
 const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
 
+// El certificado de la wifi: con https pero sin certificado de confianza el navegador no es contexto seguro,
+// así que ni ofrece instalar la app ni deja encender el micro. El servidor nos dice de dónde bajarlo.
+let caUrl = '/ca.crt';
+fetch('/api/mic-config').then(r => r.json()).then(c => { if (c && c.caUrl) caUrl = c.caUrl; }).catch(() => {});
+const certProblem = () => location.protocol === 'https:' && !window.isSecureContext;
+function paintCert(helpId, linkId) {
+  const box = $(helpId), a = $(linkId);
+  if (!box) return;
+  box.hidden = !certProblem();
+  if (a) a.onclick = e => { e.preventDefault(); location.href = caUrl; };
+}
+
 let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('b-install').hidden = false; $('install-steps').hidden = true; });
 addEventListener('appinstalled', () => { $('b-install').hidden = true; $('install-steps').hidden = false; $('install-steps').innerHTML = '<li>¡Instalado! Ábrelo desde tu pantalla de inicio: se llama «Gramola».</li>'; });
@@ -378,6 +397,7 @@ function startScreen() {
         ? ['Toca <span class="share"></span> <b>Compartir</b>, abajo en Safari', 'Elige <b>«Añadir a pantalla de inicio»</b>', 'Abre <b>Gramola</b> desde tu pantalla de inicio'].map(x => `<li>${x}</li>`).join('')
         : ['Abre el menú del navegador (⋮)', 'Elige <b>«Instalar app»</b> o <b>«Añadir a pantalla de inicio»</b>', 'Abre <b>Gramola</b> desde tu pantalla de inicio'].map(x => `<li>${x}</li>`).join('');
     }
+    paintCert('cert-help', 'cert-link');
     return show('s-install');
   }
   if (standalone && !fromQR) return show('s-scan');
@@ -393,6 +413,9 @@ $('b-install').onclick = async () => {
   if (r && r.outcome === 'accepted') { $('b-install').hidden = true; }
 };
 $('b-manual').onclick = () => { show('s-join'); codeInputs[0].focus(); };
+// Sin instalar también se puede cantar, pero solo con contexto seguro: si no, el botón lleva a un callejón sin salida
+$('b-skip').onclick = () => show('s-join');
+$('b-skip').hidden = !window.isSecureContext;
 
 // Lector de QR: el del propio móvil (BarcodeDetector) o jsQR si no lo tiene (iPhone)
 let camStream = null, scanTimer = null;

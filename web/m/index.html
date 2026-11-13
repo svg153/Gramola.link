@@ -42,8 +42,13 @@
     <ol class="steps" id="install-steps" hidden></ol>
     <div class="inst-room" id="inst-room" hidden><span>Código de la sala</span><b id="inst-code"></b><p>Al abrir la app, escanea otra vez el QR de la tele o escribe este código.</p></div>
     <p class="hint" id="inst-have">¿Ya la tienes? Ábrela desde tu pantalla de inicio: se llama «Gramola».</p>
+    <div class="cert" id="cert-help" hidden>
+      <p><b>El navegador no se fía de esta wifi.</b> Por eso no deja instalar la app ni encender el micro.</p>
+      <p><a id="cert-link" href="/ca.crt">Descargar el certificado de Gramola</a> y ábrelo para instalarlo. Después cierra y vuelve a abrir el navegador.</p>
+    </div>
     <div class="grow"></div>
     <button class="cta" id="b-install" hidden>Instalar <span>↓</span></button>
+    <button class="ghost wide" id="b-skip">Seguir sin instalar</button>
     <footer class="foot"><img src="/assets/nuvola/tinta.png" alt="nuvola"> · <span class="g-host"></span></footer>
   </section>
 
@@ -126,6 +131,10 @@
     <h2 class="mid">Actívalo<br>en <span id="browser-name">el navegador</span></h2>
     <p class="txt" id="blocked-text">Sin micro no podemos oírte. Así se arregla:</p>
     <ol class="steps" id="blocked-steps"></ol>
+    <div class="cert" id="cert-help-b" hidden>
+      <p><b>El navegador no se fía de esta wifi</b>, así que no deja encender el micro.</p>
+      <p><a id="cert-link-b" href="/ca.crt">Descargar el certificado de Gramola</a> y ábrelo para instalarlo. Después recarga esta página.</p>
+    </div>
     <div class="grow"></div>
     <button class="cta" id="b-ask">Activar el micro <span>→</span></button>
     <button class="cta dark" id="b-reload">Ya está, recargar <span>→</span></button>

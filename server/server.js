@@ -7,6 +7,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -19,6 +20,15 @@ const WEB_DIR = process.env.WEB_DIR || path.join(__dirname, '..', 'web');
 const SONGS_DIR = process.env.SONGS_DIR || path.join(WEB_DIR, 'songs');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const SERVE_STATIC = process.env.SERVE_STATIC !== '0';
+// HTTPS opcional: el micro del mÃ³vil solo funciona en contexto seguro (ver docs/INSTALACION.md).
+// Con TLS_CERT y TLS_KEY se sirve por https (y el QR de la tele apunta solo a https).
+const TLS_CERT = process.env.TLS_CERT || '';
+const TLS_KEY = process.env.TLS_KEY || '';
+// CA que firmó el certificado: se ofrece para descargar (/ca.crt) y así el móvil puede confiar en el https.
+// Sin TLS_CA se busca un ca.crt junto al certificado.
+const TLS_CA = process.env.TLS_CA || (TLS_CERT ? path.join(path.dirname(TLS_CERT), 'ca.crt') : '');
+const CA_FILE = TLS_CA && fs.existsSync(TLS_CA) ? TLS_CA : '';
+
 const MAX_PLAYERS = 8;
 const MAX_ROOMS = Number(process.env.MAX_ROOMS || 500);   // tope de salas a la vez (hay 6.390 códigos; sin tope, al agotarse el servidor se quedaría colgado)
 const ROOM_TTL_MS = 3 * 60 * 1000;  // la sala se cierra sola a los 3 min sin tele conectada (orden del usuario, 03-nov)
@@ -353,13 +363,22 @@ const admin = require('./admin')({
 
 // Cualquier fallo no previsto en una petición responde 500 y el servidor sigue (antes, un error sin capturar lo tumbaba
 // y se caían todas las salas hasta que systemd lo levantaba)
-const server = http.createServer((req, res) => {
+const handler = (req, res) => {
   handleHttp(req, res).catch(e => {
     console.error('http:', e && e.message);
     if (res.headersSent) return res.destroy();
     json(res, 500, { error: 'Error interno' });
   });
-});
+};
+// Con TLS se atiende por https (el micro del móvil necesita contexto seguro) y, si se pide, también por http
+// en otro puerto: así la tele se abre en un Chrome normal sin el aviso de certificado y comparte las mismas salas.
+const HTTPS_ON = !!(TLS_CERT && TLS_KEY);
+const server = HTTPS_ON
+  ? https.createServer({ cert: fs.readFileSync(TLS_CERT), key: fs.readFileSync(TLS_KEY) }, handler)
+  : http.createServer(handler);
+const HTTP_PORT = HTTPS_ON && process.env.HTTP_PORT !== '0' ? Number(process.env.HTTP_PORT || 8877) : 0;
+const httpServer = HTTP_PORT && HTTP_PORT !== PORT ? http.createServer(handler) : null;
+const servidores = httpServer ? [server, httpServer] : [server];
 
 async function handleHttp(req, res) {
   // («//songs/…» no es un host: con varias barras al principio la URL se lee como ruta)
@@ -383,8 +402,33 @@ async function handleHttp(req, res) {
   }
   // La dirección antigua del micro (/m) lleva al subdominio micro. del mismo dominio
   if (!MICRO_HOST.test(host) && (url.pathname === '/m' || url.pathname === '/m/') && req.method === 'GET') {
-    res.writeHead(301, { location: 'https://micro.' + host.replace(/^www\./, '').replace(/:\d+$/, '') + '/' + url.search });
+    // En pruebas locales (IP o localhost) no existe el subdominio micro.: se sirve el micro tal cual
+    const bare = host.replace(/^www\./, '').replace(/:\d+$/, '');
+    if (/^(localhost|\d+\.\d+\.\d+\.\d+)$/.test(bare)) {
+      return serveStatic(req, res, '/m/index.html');
+    }
+    res.writeHead(301, { location: 'https://micro.' + bare + '/' + url.search });
     return res.end();
+  }
+  // El certificado de la CA local, para que el móvil pueda fiarse del https (el micro no funciona sin él).
+  // Se sirve por los dos puertos: por http el móvil lo baja sin ver antes ningún aviso.
+  if (req.method === 'GET' && url.pathname === '/ca.crt' && CA_FILE) {
+    let pem;
+    try { pem = fs.readFileSync(CA_FILE); } catch { return json(res, 404, { error: 'ca' }); }
+    res.writeHead(200, {
+      'content-type': 'application/x-x509-ca-cert',
+      'content-disposition': 'attachment; filename="gramola-ca.crt"',
+      'cache-control': 'no-cache',
+    });
+    return res.end(pem);
+  }
+  // Lo que la app del micro necesita saber del certificado (la tele y el micro comparten proceso y puertos)
+  if (req.method === 'GET' && url.pathname === '/api/mic-config') {
+    const ip = String(req.headers.host || '').replace(/:\d+$/, '');
+    return json(res, 200, {
+      secure: HTTPS_ON,
+      caUrl: CA_FILE ? (HTTP_PORT ? `http://${ip}:${HTTP_PORT}/ca.crt` : '/ca.crt') : '',
+    });
   }
   if (req.method === 'POST' && url.pathname === '/api/tv-pass') {
     let body;
@@ -544,9 +588,18 @@ const MAX_WS_POR_IP = 300;
 const wsPorIp = new Map();
 const ipDe = req => String(req.headers['cf-connecting-ip'] || req.socket.remoteAddress || '');
 const wss = new WebSocketServer({
-  server, path: '/ws', maxPayload: 64 * 1024,   // (la foto del jugador ~10 KB)
+  noServer: true, maxPayload: 64 * 1024,   // (la foto del jugador ~10 KB)
   verifyClient: ({ req }) => origenPermitido(req) && (wsPorIp.get(ipDe(req)) || 0) < MAX_WS_POR_IP,
 });
+// El mismo WebSocket se engancha a todos los puertos (https y el http opcional): las salas son las mismas
+for (const srv of servidores) {
+  srv.on('upgrade', (req, socket, head) => {
+    let pathname;
+    try { pathname = new URL(String(req.url || '/'), 'http://x').pathname; } catch { return socket.destroy(); }
+    if (pathname !== '/ws') return socket.destroy();
+    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+  });
+}
 
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
@@ -779,4 +832,8 @@ process.on('SIGTERM', salir);
 process.on('SIGINT', salir);
 restoreRooms();
 
-server.listen(PORT, HOST, () => console.log(`gramola: escuchando en ${HOST}:${server.address().port}, canciones en ${SONGS_DIR}`));
+server.listen(PORT, HOST, () => {
+  console.log(`gramola: escuchando en ${HTTPS_ON ? 'https' : 'http'}://${HOST}:${server.address().port}, canciones en ${SONGS_DIR}`);
+  if (!httpServer) return;
+  httpServer.listen(HTTP_PORT, HOST, () => console.log(`gramola: (tele sin certificado) http://${HOST}:${httpServer.address().port}`));
+});

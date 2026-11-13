@@ -5,7 +5,8 @@
 
 Para cada carpeta cuyo .txt tenga #MEDLEYSTARTBEAT y #MEDLEYENDBEAT crea:
   - megamix.mp3: desde ANTES s antes del estribillo hasta DESPUES s después (corte exacto con ffmpeg),
-    para que la tele pueda fundir una canción con la siguiente.
+    para que la tele pueda fundir una canción con la siguiente. Sin ffmpeg, si el audio es WAV, el recorte se
+    hace igual en Python y se guarda como megamix.wav.
   - megamix.json: {"file", "offset", "start", "end"} en ms del audio original
     (offset = dónde empieza el recorte; start/end = el estribillo).
 Con --auto, a las canciones sin marcas se les busca el estribillo: el bloque de frases (2 o más) que se repite
@@ -16,10 +17,13 @@ para encontrar repeticiones, pero no se muestra ni se guarda.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import wave
 
 ANTES, DESPUES = 5000, 3000  # ms
+FFMPEG = shutil.which('ffmpeg')
 
 
 def leer_txt(path):
@@ -110,6 +114,26 @@ def estribillo_auto(path, head):
     return round(gap + ph[i][0][0] * beat), round(gap + (ph[i + k - 1][-1][0] + ph[i + k - 1][-1][1]) * beat)
 
 
+def cortar_wav(origen, destino, a_ms, b_ms):
+    """Copia el tramo [a_ms, b_ms) de un WAV PCM a `destino`, sin ffmpeg. True si lo consigue."""
+    try:
+        with wave.open(origen, 'rb') as w:
+            if w.getcomptype() != 'NONE':
+                return False
+            params = w.getparams()
+            fr, n = w.getframerate(), w.getnframes()
+            w.setpos(min(n, max(0, int(a_ms * fr / 1000))))
+            datos = w.readframes(max(0, min(n, int(b_ms * fr / 1000)) - int(a_ms * fr / 1000)))
+    except (wave.Error, EOFError, OSError):
+        return False
+    if not datos:
+        return False
+    with wave.open(destino, 'wb') as o:
+        o.setparams(params)
+        o.writeframes(datos)
+    return True
+
+
 def preparar(carpeta, forzar=False, auto=False):
     files = os.listdir(carpeta)
     txt = min((f for f in files if f.lower().endswith('.txt')), key=len, default=None)   # la normal antes que la [MULTI]
@@ -127,23 +151,36 @@ def preparar(carpeta, forzar=False, auto=False):
     audio = head.get('MP3') or head.get('AUDIO')
     if not audio or '/' in audio or '\\' in audio or audio in ('.', '..') or not os.path.exists(os.path.join(carpeta, audio)):
         return 'sin audio'
-    out = os.path.join(carpeta, 'megamix.mp3')
     off, a, b = t
-    if forzar or not os.path.exists(out):
-        # -ss/-to después de -i: corte exacto (decodifica desde el principio). A un temporal y se renombra al acabar:
-        # si se corta a medias no queda un megamix.mp3 truncado que luego se dé por bueno
-        tmp = out + '.tmp'
-        r = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', os.path.join(carpeta, audio),
-                            '-ss', f'{off / 1000:.3f}', '-to', f'{(b + DESPUES) / 1000:.3f}',
-                            '-vn', '-ac', '2', '-c:a', 'libmp3lame', '-b:a', '192k', '-f', 'mp3', tmp], capture_output=True)
-        if r.returncode != 0 or not os.path.exists(tmp):
-            if os.path.exists(tmp):
-                os.remove(tmp)
-            return 'ffmpeg falló'
-        os.replace(tmp, out)
+    mp3 = os.path.join(carpeta, 'megamix.mp3')
+    wav = os.path.join(carpeta, 'megamix.wav')
+    clip = 'megamix.mp3' if os.path.exists(mp3) else ('megamix.wav' if os.path.exists(wav) else None)
+    if forzar or not clip:
+        if FFMPEG:
+            # -ss/-to después de -i: corte exacto (decodifica desde el principio). A un temporal y se renombra al acabar:
+            # si se corta a medias no queda un megamix.mp3 truncado que luego se dé por bueno
+            tmp = mp3 + '.tmp'
+            r = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', os.path.join(carpeta, audio),
+                                '-ss', f'{off / 1000:.3f}', '-to', f'{(b + DESPUES) / 1000:.3f}',
+                                '-vn', '-ac', '2', '-c:a', 'libmp3lame', '-b:a', '192k', '-f', 'mp3', tmp], capture_output=True)
+            if r.returncode != 0 or not os.path.exists(tmp):
+                if os.path.exists(tmp):
+                    os.remove(tmp)
+                if not clip:
+                    return 'ffmpeg falló'
+            else:
+                os.replace(tmp, mp3)
+                clip = 'megamix.mp3'
+        elif audio.lower().endswith('.wav') and cortar_wav(os.path.join(carpeta, audio), wav + '.tmp', off, b + DESPUES):
+            os.replace(wav + '.tmp', wav)
+            clip = 'megamix.wav'
+        elif not clip:
+            return 'sin ffmpeg (y el audio no es WAV)'
+    if not clip:
+        return 'sin recorte'
     jtmp = os.path.join(carpeta, 'megamix.json.tmp')
     with open(jtmp, 'w') as f:
-        json.dump({'file': 'megamix.mp3', 'offset': off, 'start': a, 'end': b, 'origen': origen}, f)
+        json.dump({'file': clip, 'offset': off, 'start': a, 'end': b, 'origen': origen}, f)
     os.replace(jtmp, os.path.join(carpeta, 'megamix.json'))
     return f'ok · estribillo {origen} {(b - a) / 1000:.0f} s'
 

@@ -42,7 +42,10 @@ E                   fin
 
 - **Editores** libres de UltraStar (por ejemplo *Yass* o *UltraStar Creator*) permiten marcar sílabas y tonos sobre el audio.
 - Si la letra va adelantada o retrasada respecto a la música, ajusta `#GAP` (en ms).
-- `tools/demo-song.py` es un ejemplo completo de cómo generar una canción por código.
+- `tools/demo-song.py` es un ejemplo completo de cómo generar una canción por código: crea varias demos con letra y melodía
+  originales, portada PNG y el tramo de estribillo del Megamix **sin necesitar ffmpeg** (si no está, escribe WAV en vez de MP3
+  y se salta el vídeo de prueba). `python3 tools/demo-song.py` crea las que falten; `--forzar` las rehace y
+  `python3 tools/demo-song.py demo-cocina` hace solo esa.
 
 ## Añadir canciones (paso a paso)
 
@@ -53,6 +56,8 @@ E                   fin
    - Quita el vídeo y las referencias a fondos que no vienen.
    - Recorta el tramo del **Megamix** (`megamix.mp3` + `megamix.json`): del estribillo marcado o, si no lo hay, del bloque de
      frases repetido más largo (de 10 a 45 s; acierta en ~8 de cada 10 comparado con los marcados).
+   - **Sin ffmpeg** en el sistema sigue sirviendo para audio que ya tengas: copia el audio tal cual (no lo convierte ni lo
+     saca de un vídeo), no toca los vídeos y, si el audio es WAV, recorta el tramo del Megamix igual en Python (`megamix.wav`).
 2. **Revisar duplicados** contra el servidor: por nombre de carpeta, por artista+título y por huella del audio.
 3. **Igualar el volumen** — `python3 tools/normalizar.py DESTINO`: −12 LUFS (loudnorm en dos pasadas, picos a −1 dBTP) en las que
    se alejen más de 1,5 dB; guarda `volumen.json` y rehace el tramo del Megamix.

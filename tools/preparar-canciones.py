@@ -11,6 +11,8 @@ Para cada carpeta de ORIGEN crea una copia lista en DESTINO:
   - .txt pasado a UTF-8. Solo se reescriben las cabeceras: las notas y la letra no se modifican.
   - Sin vídeo por defecto (algunas teles no reproducen videoclips junto a la canción). Con --con-video, los vídeos
     que la tele no lee (.avi, .mkv…) se convierten a MP4 H.264 de hasta 720p y sin sonido.
+Sin ffmpeg en el sistema copia el audio tal cual (sin convertirlo ni sacarlo de un vídeo) y no toca los vídeos;
+el resto del trabajo (nombres, cabeceras, UTF-8, Megamix) se hace igual.
 Si el .txt trae el estribillo marcado (#MEDLEYSTARTBEAT/#MEDLEYENDBEAT), crea también el tramo del Megamix.
 No muestra ni registra el contenido de las letras.
 """
@@ -28,6 +30,7 @@ AUDIO = ('.mp3', '.ogg', '.m4a', '.opus', '.wav')
 IMG = ('.jpg', '.jpeg', '.png', '.webp')
 VIDEO_OK = ('.mp4', '.webm')
 VIDEO_CONV = ('.avi', '.mkv', '.flv', '.divx', '.mpg', '.mpeg', '.mov', '.wmv', '.m4v')
+FFMPEG, FFPROBE = shutil.which('ffmpeg'), shutil.which('ffprobe')
 nfc = lambda s: unicodedata.normalize('NFC', s)
 
 
@@ -42,6 +45,8 @@ def pick(files, exts, prefer=None):
 
 
 def convertir_video(src, dst):
+    if not FFMPEG:
+        return False
     vf = "scale='min(1280,iw)':-2"
     base = ['ffmpeg', '-y', '-loglevel', 'error', '-i', src, '-vf', vf, '-an', '-movflags', '+faststart', '-pix_fmt', 'yuv420p']
     for enc in (['-c:v', 'h264_videotoolbox', '-b:v', '2500k'], ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24']):
@@ -52,6 +57,8 @@ def convertir_video(src, dst):
 
 
 def codec(path):
+    if not FFPROBE:
+        return None
     r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a:0', '-show_entries', 'stream=codec_name',
                         '-of', 'csv=p=0', path], capture_output=True, text=True)
     return r.stdout.strip() or None
@@ -85,6 +92,8 @@ def preparar(src_dir, dst_root, sin_video):
     if audio_from_video:
         audio = os.path.splitext(nfc(audio_from_video))[0] + '.mp3'
         if not (os.path.exists(os.path.join(dst, audio)) and os.path.getsize(os.path.join(dst, audio)) > 10000):
+            if not FFMPEG:
+                return name, 'sin ffmpeg: el audio está dentro del vídeo'
             r = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', os.path.join(src_dir, audio_from_video), '-vn',
                                 '-c:a', 'libmp3lame', '-b:a', '192k', os.path.join(dst, audio)], capture_output=True)
             if r.returncode != 0:
@@ -93,7 +102,7 @@ def preparar(src_dir, dst_root, sin_video):
         shutil.copy2(os.path.join(src_dir, audio), os.path.join(dst, nfc(audio)))
         # Un .mp3 que por dentro no es MP3 (p. ej. MP2): la tele no lo trata bien → se convierte a MP3 de verdad
         dest = os.path.join(dst, nfc(audio))
-        if codec(dest) is None and open(dest, 'rb').read(3) == b'ID3':
+        if FFMPEG and codec(dest) is None and open(dest, 'rb').read(3) == b'ID3':
             # Etiqueta ID3 pegada delante de otro contenedor (p. ej. un WAV con MP3 dentro): se quita la etiqueta
             raw = open(dest, 'rb').read(); n = 10 + ((raw[6] & 127) << 21 | (raw[7] & 127) << 14 | (raw[8] & 127) << 7 | (raw[9] & 127))
             open(dest + '.sin-id3', 'wb').write(raw[n:])
@@ -103,7 +112,7 @@ def preparar(src_dir, dst_root, sin_video):
                 os.remove(dest + '.tmp-in'); convertido = r.returncode == 0
             else:
                 os.remove(dest + '.sin-id3')
-        if audio.lower().endswith('.mp3') and codec(os.path.join(dst, nfc(audio))) not in ('mp3', None):
+        if FFMPEG and audio.lower().endswith('.mp3') and codec(os.path.join(dst, nfc(audio))) not in ('mp3', None):
             tmp = os.path.join(dst, nfc(audio)) + '.tmp.mp3'
             r = subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', os.path.join(dst, nfc(audio)), '-vn',
                                 '-c:a', 'libmp3lame', '-b:a', '192k', tmp], capture_output=True)

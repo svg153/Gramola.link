@@ -1,0 +1,4 @@
+# Los ficheros de web/vendor/ se sirven con atributos integrity (SRI):
+# cualquier conversion de fin de linea (CRLF en Windows) cambia el SHA-384
+# y el navegador bloquea React, ReactDOM y Babel.
+web/vendor/** -text
